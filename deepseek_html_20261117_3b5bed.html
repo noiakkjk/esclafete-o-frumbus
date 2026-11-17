@@ -1,0 +1,650 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<title>FRUMBUS DOOM - Cajado Mágico</title>
+<style>
+  body { margin:0; overflow:hidden; background:#000; font-family:'Courier New', Courier, monospace; user-select:none; }
+  
+  /* Efeito de Pixelização */
+  canvas#jogo { 
+    display: block;
+    image-rendering: pixelated;
+    image-rendering: crisp-edges;
+  }
+
+  /* HUD Clássico */
+  #hud {
+    position: fixed; bottom: 0; left: 0; right: 0;
+    height: 80px;
+    background: #444;
+    border-top: 4px solid #888;
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 0 40px; color: #fff; z-index: 10;
+    pointer-events: none;
+    box-shadow: inset 0 10px 20px rgba(0,0,0,0.5);
+  }
+  
+  .hud-panel {
+    background: #222; border: 2px inset #555; padding: 10px; text-align: center;
+    width: 120px;
+  }
+  .hud-label { font-size: 0.8rem; color: #aaa; margin-bottom: 5px; }
+  .hud-value { font-size: 2rem; font-weight: bold; color: #ff0000; text-shadow: 0 0 5px #ff0000; }
+  .hud-value.ammo { color: #ffd700; text-shadow: 0 0 5px #ffd700; }
+  .hud-value.level { color: #00ddff; text-shadow: 0 0 5px #00ddff; }
+
+  /* CAJADO MÁGICO (Viewmodel em SVG) */
+  #weapon-overlay {
+    position: fixed; bottom: -40px; right: 15%;
+    width: 250px; height: 350px; pointer-events: none; z-index: 5;
+    /* SVG de um cajado de madeira com uma pedra brilhante ciano no topo */
+    background-image: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><path d="M 60 100 L 45 40" stroke="%233b2211" stroke-width="6" stroke-linecap="round"/><path d="M 60 100 L 45 40" stroke="%23553022" stroke-width="3" stroke-linecap="round"/><circle cx="45" cy="35" r="12" fill="%2300ddff" opacity="0.6"/><circle cx="45" cy="35" r="7" fill="%23ffffff"/><path d="M 45 20 L 45 15 M 30 35 L 25 35 M 60 35 L 65 35 M 45 50 L 45 55" stroke="%2300ddff" stroke-width="3" stroke-linecap="round"/></svg>');
+    background-size: contain; background-repeat: no-repeat; background-position: bottom center;
+    transition: transform 0.05s;
+    transform-origin: bottom center;
+  }
+
+  #flash { position:fixed; inset:0; background:#fff; opacity:0; pointer-events:none; z-index:15; }
+  #damage-overlay { position:fixed; inset:0; background:rgba(255,0,0,0); pointer-events:none; z-index:14; transition: background 0.1s;}
+
+  /* Barra de Vida do CHEFÃO */
+  #boss-bar-container {
+    position: fixed; top: 20px; left: 50%; transform: translateX(-50%);
+    width: 60%; height: 30px; background: #333; border: 4px solid #ff0000;
+    display: none; z-index: 12; box-shadow: 0 0 20px #ff0000;
+  }
+  #boss-bar-fill { width: 100%; height: 100%; background: #ff2222; transition: width 0.2s; }
+  #boss-bar-text {
+    position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+    display: flex; justify-content: center; align-items: center;
+    color: #fff; font-weight: bold; text-shadow: 2px 2px #000; font-size: 1.2rem;
+  }
+
+  /* Overlay de Transição de Fase */
+  #level-overlay {
+    position: fixed; inset: 0; background: rgba(0,0,0,0.8); z-index: 18;
+    display: none; flex-direction: column; justify-content: center; align-items: center;
+    color: #00ff00; font-size: 3rem; font-weight: bold; text-shadow: 0 0 20px #00ff00;
+    pointer-events: none;
+  }
+
+  /* Menus */
+  #menu, #game-over {
+    position:fixed; inset:0; background:rgba(0,0,0,0.95); z-index:20;
+    display:flex; flex-direction:column; justify-content:center; align-items:center;
+    text-align:center;
+  }
+  #game-over { display:none; }
+  
+  h1 { font-size:4rem; color:#ff0000; text-shadow: 4px 4px 0px #550000; margin:0 0 20px 0; letter-spacing: 5px;}
+  p { color:#aaa; font-size:1.2rem; margin-bottom:30px; max-width:600px; line-height:1.5; }
+  
+  button {
+    padding:16px 50px; font-size:1.5rem; font-weight:bold;
+    background:#888; color:#000; border: 4px outset #aaa; cursor:pointer;
+    text-transform: uppercase; font-family: inherit;
+  }
+  button:active { border-style: inset; }
+</style>
+</head>
+<body>
+
+<canvas id="jogo"></canvas>
+
+<div id="boss-bar-container">
+  <div id="boss-bar-fill"></div>
+  <div id="boss-bar-text">FRUMBUS CHEFÃO</div>
+</div>
+
+<div id="hud">
+  <div class="hud-panel">
+    <div class="hud-label">VIDA</div>
+    <div class="hud-value" id="ui-hp">100%</div>
+  </div>
+  <div class="hud-panel">
+    <div class="hud-label">NÍVEL</div>
+    <div class="hud-value level" id="ui-level">1</div>
+  </div>
+  <div class="hud-panel">
+    <div class="hud-label">ALVOS</div>
+    <div class="hud-value" id="ui-kills">0</div>
+  </div>
+</div>
+
+<div id="weapon-overlay"></div>
+<div id="flash"></div>
+<div id="damage-overlay"></div>
+
+<div id="level-overlay">
+  <div id="level-text">FASE CONCLUÍDA!</div>
+  <div style="font-size: 1.5rem; color: #fff; margin-top: 20px;">Preparando próxima fase...</div>
+</div>
+
+<div id="menu">
+  <h1>FRUMBUS DOOM</h1>
+  <p>Sobreviva a 10 ondas de Frumbus. Use o Cajado Mágico do Magopaulobrificado para disparar raios. No nível 10, o Chefão aparecerá.</p>
+  <button id="btnStart">INICIAR CAMPANHA</button>
+  <div style="margin-top:30px; color:#666; font-size:1rem;">WASD para andar · Mouse para mirar · Clique para disparar raio</div>
+</div>
+
+<div id="game-over">
+  <h1 id="game-over-title">VOCÊ MORREU</h1>
+  <p id="game-over-desc">A horda de Frumbus te dominou...</p>
+  <button id="btnRestart">TENTAR NOVAMENTE</button>
+</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+  }
+}
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+import { PointerLockControls } from 'three/addons/controls/PointerLockControls.js';
+
+// ==========================================
+// CONFIGURAÇÃO BASE (ESTILO RETRÔ)
+// ==========================================
+const cena = new THREE.Scene();
+cena.background = new THREE.Color(0x220000);
+cena.fog = new THREE.FogExp2(0x220000, 0.1);
+
+const camera = new THREE.PerspectiveCamera(90, innerWidth/innerHeight, 0.1, 100);
+camera.position.set(0, 1.6, 0);
+
+const renderer = new THREE.WebGLRenderer({ canvas: document.getElementById('jogo'), antialias: false });
+const resolucaoEscala = 3;
+renderer.setSize(innerWidth / resolucaoEscala, innerHeight / resolucaoEscala, false);
+renderer.domElement.style.width = '100%';
+renderer.domElement.style.height = '100%';
+
+window.addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth / resolucaoEscala, innerHeight / resolucaoEscala, false);
+});
+
+// ==========================================
+// CONTROLES E UI
+// ==========================================
+const controls = new PointerLockControls(camera, document.body);
+cena.add(controls.getObject());
+
+const uiHp = document.getElementById('ui-hp');
+const uiLevel = document.getElementById('ui-level');
+const uiKills = document.getElementById('ui-kills');
+const weaponOverlay = document.getElementById('weapon-overlay');
+const flashEl = document.getElementById('flash');
+const damageOverlay = document.getElementById('damage-overlay');
+const bossBarContainer = document.getElementById('boss-bar-container');
+const bossBarFill = document.getElementById('boss-bar-fill');
+const levelOverlay = document.getElementById('level-overlay');
+const levelText = document.getElementById('level-text');
+
+// ==========================================
+// ILUMINAÇÃO E CENÁRIO
+// ==========================================
+cena.add(new THREE.AmbientLight(0xffffff, 0.8));
+const luzLanterna = new THREE.PointLight(0x00ddff, 3, 20); // Luz azulada do cajado
+luzLanterna.position.set(0, 0, 0);
+camera.add(luzLanterna);
+cena.add(camera);
+
+const chao = new THREE.Mesh(new THREE.PlaneGeometry(80, 80), new THREE.MeshStandardMaterial({ color: 0x330000 }));
+chao.rotation.x = -Math.PI / 2;
+cena.add(chao);
+
+const teto = new THREE.Mesh(new THREE.PlaneGeometry(80, 80), new THREE.MeshStandardMaterial({ color: 0x110000 }));
+teto.rotation.x = Math.PI / 2;
+teto.position.y = 6;
+cena.add(teto);
+
+const box3Paredes = [];
+for (let i = 0; i < 25; i++) {
+  const w = 2 + Math.random() * 4;
+  const x = (Math.random() - 0.5) * 60;
+  const z = (Math.random() - 0.5) * 60;
+  if (Math.abs(x) < 6 && Math.abs(z) < 6) continue;
+  
+  const parede = new THREE.Mesh(
+    new THREE.BoxGeometry(w, 6, w),
+    new THREE.MeshStandardMaterial({ color: 0x552222, roughness: 0.8 })
+  );
+  parede.position.set(x, 3, z);
+  cena.add(parede);
+  box3Paredes.push(new THREE.Box3().setFromObject(parede));
+}
+
+// ==========================================
+// TEXTURAS PIXEL ART
+// ==========================================
+function criarTexturaFrumbus(corpoHex, olhoHex) {
+  const canvas = document.createElement('canvas');
+  canvas.width = 128; canvas.height = 128;
+  const ctx = canvas.getContext('2d');
+  
+  ctx.beginPath(); ctx.arc(64, 64, 50, 0, Math.PI * 2); ctx.fillStyle = corpoHex; ctx.fill();
+  ctx.fillStyle = '#3b1166'; ctx.fillRect(60, 0, 8, 20);
+  ctx.fillStyle = '#ffcc00'; ctx.beginPath();
+  ctx.moveTo(64, 0); ctx.lineTo(75, 5); ctx.lineTo(75, 15); ctx.lineTo(64, 20); ctx.lineTo(53, 15); ctx.lineTo(53, 5); ctx.fill();
+  ctx.beginPath(); ctx.arc(64, 64, 25, 0, Math.PI * 2); ctx.fillStyle = olhoHex; ctx.fill();
+  ctx.beginPath(); ctx.arc(70, 64, 10, 0, Math.PI * 2); ctx.fillStyle = '#000000'; ctx.fill();
+  ctx.beginPath(); ctx.ellipse(35, 110, 15, 8, 0, 0, Math.PI*2); ctx.fillStyle = '#3b1166'; ctx.fill();
+  ctx.beginPath(); ctx.ellipse(93, 110, 15, 8, 0, 0, Math.PI*2); ctx.fillStyle = '#3b1166'; ctx.fill();
+
+  const textura = new THREE.CanvasTexture(canvas);
+  textura.magFilter = THREE.NearestFilter; textura.minFilter = THREE.NearestFilter;
+  return textura;
+}
+
+const texNormal = criarTexturaFrumbus('#6a0dad', '#ffffff');
+const texBoss = criarTexturaFrumbus('#ff0000', '#ffffff');
+
+// ==========================================
+// ENTIDADES E ESTADO DO JOGO
+// ==========================================
+let jogoAtivo = false;
+let nivel = 1;
+let hp = 100;
+let invulneravel = 0;
+let alvosRestantes = 0;
+let bossAtivo = false;
+let bossHp = 0;
+let bossMaxHp = 30;
+let tempoSpawnBoss = 0;
+
+const inimigos = [];
+const projeteisInimigos = [];
+const raiosVisuais = []; // Para armazenar os raios desenhados temporariamente
+const raycaster = new THREE.Raycaster();
+
+const menu = document.getElementById('menu');
+const gameOverScreen = document.getElementById('game-over');
+const btnStart = document.getElementById('btnStart');
+const btnRestart = document.getElementById('btnRestart');
+
+btnStart.addEventListener('click', () => controls.lock());
+btnRestart.addEventListener('click', () => controls.lock());
+
+controls.addEventListener('lock', () => {
+  menu.style.display = 'none';
+  gameOverScreen.style.display = 'none';
+  jogoAtivo = true;
+  iniciarJogo();
+});
+
+controls.addEventListener('unlock', () => {
+  if (jogoAtivo && !levelOverlay.style.display.includes('flex')) menu.style.display = 'flex';
+});
+
+// ==========================================
+// GERENCIAMENTO DE FASES
+// ==========================================
+function iniciarJogo() {
+  nivel = 1;
+  hp = 100;
+  limparCena();
+  atualizarHUD();
+  iniciarFase(nivel);
+}
+
+function iniciarFase(n) {
+  limparCena();
+  camera.position.set(0, 1.6, 0);
+  bossBarContainer.style.display = 'none';
+  bossAtivo = false;
+  
+  if (n < 10) {
+    alvosRestantes = 2 + n;
+    for (let i = 0; i < alvosRestantes; i++) {
+      criarInimigo(2.0 + (n * 0.2));
+    }
+  } else {
+    alvosRestantes = 1;
+    bossAtivo = true;
+    bossHp = bossMaxHp;
+    bossBarContainer.style.display = 'block';
+    bossBarFill.style.width = '100%';
+    criarBoss();
+  }
+  atualizarHUD();
+}
+
+function limparCena() {
+  inimigos.forEach(i => cena.remove(i.mesh));
+  inimigos.length = 0;
+  projeteisInimigos.forEach(p => cena.remove(p.mesh));
+  projeteisInimigos.length = 0;
+  raiosVisuais.forEach(r => cena.remove(r));
+  raiosVisuais.length = 0;
+  
+  if (window.bossMesh) { cena.remove(window.bossMesh); window.bossMesh = null; }
+  levelOverlay.style.display = 'none';
+  document.body.style.pointerEvents = 'auto';
+}
+
+function criarInimigo(vel) {
+  const mat = new THREE.SpriteMaterial({ map: texNormal });
+  const sprite = new THREE.Sprite(mat);
+  sprite.scale.set(3, 3, 1);
+  
+  let px, pz;
+  do {
+    px = (Math.random() - 0.5) * 50;
+    pz = (Math.random() - 0.5) * 50;
+  } while (Math.sqrt(px*px + pz*pz) < 10);
+  
+  sprite.position.set(px, 1.5, pz);
+  cena.add(sprite);
+  
+  inimigos.push({ mesh: sprite, vivo: true, velocidade: vel, isBoss: false, tempo: Math.random() * 10 });
+}
+
+function criarBoss() {
+  const mat = new THREE.SpriteMaterial({ map: texBoss });
+  window.bossMesh = new THREE.Sprite(mat);
+  window.bossMesh.scale.set(12, 12, 1);
+  window.bossMesh.position.set(0, 6, -20);
+  cena.add(window.bossMesh);
+  tempoSpawnBoss = 3.0;
+}
+
+function proximaFase() {
+  nivel++;
+  if (nivel > 10) {
+    jogoAtivo = false;
+    controls.unlock();
+    gameOverScreen.style.display = 'flex';
+    document.getElementById('game-over-title').innerText = "VOCÊ VENCEU!";
+    document.getElementById('game-over-title').style.color = "#44ff44";
+    document.getElementById('game-over-desc').innerText = "Você derrotou o Chefão Frumbus com o poder do cajado.";
+    return;
+  }
+
+  levelOverlay.style.display = 'flex';
+  levelText.innerText = `FASE ${nivel} CONCLUÍDA!`;
+  
+  setTimeout(() => {
+    hp = Math.min(100, hp + 20);
+    iniciarFase(nivel);
+  }, 2000);
+}
+
+// ==========================================
+// O EFEITO DO RAIO (Zigue-Zague)
+// ==========================================
+function criarRaioVisual(inicio, fim) {
+  const pontos = [];
+  const segmentos = 8; // Quantidade de zigue-zagues
+  
+  pontos.push(inicio);
+  
+  // Cria pontos intermediários com desvio aleatório para parecer um raio
+  for (let i = 1; i < segmentos; i++) {
+    const t = i / segmentos;
+    const p = new THREE.Vector3().lerpVectors(inicio, fim, t);
+    
+    // Desvio perpendicular aleatório
+    p.x += (Math.random() - 0.5) * 1.5;
+    p.y += (Math.random() - 0.5) * 1.5;
+    p.z += (Math.random() - 0.5) * 1.5;
+    
+    pontos.push(p);
+  }
+  
+  pontos.push(fim);
+
+  // Cria a geometria da linha
+  const geometria = new THREE.BufferGeometry().setFromPoints(pontos);
+  
+  // Material brilhante (ciano neon)
+  const material = new THREE.LineBasicMaterial({ 
+    color: 0x00ffff, 
+    linewidth: 3,
+    transparent: true,
+    opacity: 1
+  });
+
+  const linhaRaio = new THREE.Line(geometria, material);
+  cena.add(linhaRaio);
+  raiosVisuais.push(linhaRaio);
+
+  // Remove o raio após 80 milissegundos (efeito rápido)
+  setTimeout(() => {
+    cena.remove(linhaRaio);
+    geometria.dispose();
+    material.dispose();
+    const index = raiosVisuais.indexOf(linhaRaio);
+    if (index > -1) raiosVisuais.splice(index, 1);
+  }, 80);
+}
+
+// ==========================================
+// AÇÕES (TIRO)
+// ==========================================
+document.addEventListener('mousedown', (e) => {
+  if (!jogoAtivo || e.button !== 0 || !controls.isLocked) return;
+  
+  // Animação de recuo do cajado
+  weaponOverlay.style.transform = 'translateX(0) scale(1.1) translateY(20px) rotate(-10deg)';
+  setTimeout(() => weaponOverlay.style.transform = 'translateX(0) scale(1) translateY(0) rotate(0deg)', 100);
+  
+  // Flash rápido na tela
+  flashEl.style.opacity = '0.2';
+  setTimeout(() => flashEl.style.opacity = '0', 50);
+
+  raycaster.setFromCamera(new THREE.Vector2(0, 0), camera);
+  
+  let objetosParaTestar = inimigos.filter(i => i.vivo).map(i => i.mesh);
+  if (bossAtivo && window.bossMesh) objetosParaTestar.push(window.bossMesh);
+  
+  const hits = raycaster.intersectObjects(objetosParaTestar);
+  
+  // Ponto de origem do raio (um pouco abaixo e à direita da câmera, onde fica o cajado)
+  const inicioRaio = new THREE.Vector3(0.5, -0.3, -0.5);
+  camera.localToWorld(inicioRaio);
+
+  // Ponto final (se acertar algo, vai até o objeto. Se errar, vai longe)
+  let fimRaio = camera.position.clone().add(raycaster.ray.direction.clone().multiplyScalar(40));
+
+  if (hits.length > 0) {
+    fimRaio = hits[0].point;
+    const hit = hits[0].object;
+    
+    // Acertou o Chefão
+    if (bossAtivo && hit === window.bossMesh) {
+      bossHp--;
+      bossBarFill.style.width = (bossHp / bossMaxHp * 100) + '%';
+      window.bossMesh.material.color.setHex(0xffffff);
+      setTimeout(() => window.bossMesh.material.color.setHex(0xffffff), 50);
+      
+      if (bossHp <= 0) {
+        alvosRestantes = 0;
+        atualizarHUD();
+        proximaFase();
+      }
+    } else {
+      // Acertou um lacaio
+      const inimigo = inimigos.find(i => i.mesh === hit);
+      if (inimigo && inimigo.vivo) {
+        inimigo.vivo = false;
+        inimigo.mesh.visible = false;
+        alvosRestantes--;
+        atualizarHUD();
+        
+        if (alvosRestantes <= 0 && !bossAtivo) proximaFase();
+      }
+    }
+  }
+
+  // Desenha o zigue-zague do raio
+  criarRaioVisual(inicioRaio, fimRaio);
+});
+
+// ==========================================
+// MOVIMENTO E INPUT
+// ==========================================
+const velocity = new THREE.Vector3();
+const direction = new THREE.Vector3();
+const keys = { w: false, a: false, s: false, d: false };
+
+document.addEventListener('keydown', (e) => {
+  if (e.code === 'KeyW') keys.w = true; if (e.code === 'KeyA') keys.a = true;
+  if (e.code === 'KeyS') keys.s = true; if (e.code === 'KeyD') keys.d = true;
+});
+document.addEventListener('keyup', (e) => {
+  if (e.code === 'KeyW') keys.w = false; if (e.code === 'KeyA') keys.a = false;
+  if (e.code === 'KeyS') keys.s = false; if (e.code === 'KeyD') keys.d = false;
+});
+
+function atualizarHUD() {
+  uiHp.innerText = Math.max(0, hp) + '%';
+  uiLevel.innerText = nivel;
+  uiKills.innerText = alvosRestantes;
+}
+
+// ==========================================
+// LOOP PRINCIPAL
+// ==========================================
+let lastTime = performance.now();
+
+function animar() {
+  const agora = performance.now();
+  const dt = Math.min((agora - lastTime) / 1000, 0.1);
+  lastTime = agora;
+  const t = agora / 1000;
+
+  if (jogoAtivo && controls.isLocked) {
+    
+    // 1. Movimento Player
+    const speed = 80.0;
+    velocity.x -= velocity.x * 10.0 * dt;
+    velocity.z -= velocity.z * 10.0 * dt;
+    direction.z = Number(keys.w) - Number(keys.s);
+    direction.x = Number(keys.d) - Number(keys.a);
+    direction.normalize();
+
+    if (keys.w || keys.s) velocity.z -= direction.z * speed * dt;
+    if (keys.a || keys.d) velocity.x -= direction.x * speed * dt;
+
+    const posAnterior = camera.position.clone();
+    controls.moveRight(-velocity.x * dt);
+    controls.moveForward(-velocity.z * dt);
+    camera.position.y = 1.6;
+
+    const playerBox = new THREE.Box3().setFromCenterAndSize(camera.position, new THREE.Vector3(0.5, 1.6, 0.5));
+    for (let box of box3Paredes) {
+      if (playerBox.intersectsBox(box)) { camera.position.copy(posAnterior); break; }
+    }
+
+    // Head Bobbing (Balançar ao andar)
+    if (keys.w || keys.a || keys.s || keys.d) {
+      camera.position.y = 1.6 + Math.sin(t * 20) * 0.05;
+      // Cajado balança um pouco
+      weaponOverlay.style.bottom = `-40px + ${Math.sin(t * 20) * 10}px`;
+    } else {
+      weaponOverlay.style.bottom = `-40px`;
+    }
+
+    // 2. IA dos Inimigos Normais
+    inimigos.forEach(inimigo => {
+      if (!inimigo.vivo) return;
+      inimigo.tempo += dt;
+      inimigo.mesh.position.y = 1.5 + Math.sin(inimigo.tempo * 5) * 0.5;
+
+      const dir = new THREE.Vector3().subVectors(camera.position, inimigo.mesh.position);
+      dir.y = 0;
+      const dist = dir.length();
+      dir.normalize();
+      
+      if (dist > 2) {
+        inimigo.mesh.position.x += dir.x * inimigo.velocidade * dt;
+        inimigo.mesh.position.z += dir.z * inimigo.velocidade * dt;
+      }
+
+      if (dist < 2.5 && invulneravel <= 0) {
+        hp -= 15; invulneravel = 1.0;
+        damageOverlay.style.background = `rgba(255,0,0, 0.6)`;
+        setTimeout(() => damageOverlay.style.background = `rgba(255,0,0, 0)`, 200);
+        if (hp <= 0) gameOver();
+      }
+    });
+
+    // 3. IA do Chefão
+    if (bossAtivo && window.bossMesh) {
+      const dirBoss = new THREE.Vector3().subVectors(camera.position, window.bossMesh.position);
+      dirBoss.y = 0; dirBoss.normalize();
+      if (window.bossMesh.position.distanceTo(camera.position) > 12) {
+         window.bossMesh.position.x += dirBoss.x * 3.0 * dt;
+         window.bossMesh.position.z += dirBoss.z * 3.0 * dt;
+      }
+      window.bossMesh.position.y = 6 + Math.sin(t * 2) * 1;
+
+      tempoSpawnBoss -= dt;
+      if (tempoSpawnBoss <= 0) {
+        tempoSpawnBoss = 2.5;
+        
+        const projGeo = new THREE.SphereGeometry(0.5, 8, 8);
+        const projMat = new THREE.MeshBasicMaterial({ color: 0xff00ff }); // Projétil roxo do boss
+        const projMesh = new THREE.Mesh(projGeo, projMat);
+        
+        projMesh.position.copy(window.bossMesh.position);
+        projMesh.position.y = 3;
+        cena.add(projMesh);
+        
+        const dirProj = new THREE.Vector3().subVectors(camera.position, projMesh.position).normalize();
+        projeteisInimigos.push({ mesh: projMesh, dir: dirProj, velocidade: 25 });
+      }
+    }
+
+    // 4. Atualiza Projéteis do Chefão
+    for (let i = projeteisInimigos.length - 1; i >= 0; i--) {
+      let p = projeteisInimigos[i];
+      p.mesh.position.add(p.dir.clone().multiplyScalar(p.velocidade * dt));
+
+      if (p.mesh.position.distanceTo(camera.position) < 1.5) {
+        cena.remove(p.mesh);
+        projeteisInimigos.splice(i, 1);
+        
+        if (invulneravel <= 0) {
+          hp -= 25; invulneravel = 1.0;
+          damageOverlay.style.background = `rgba(255,0,0, 0.8)`;
+          setTimeout(() => damageOverlay.style.background = `rgba(255,0,0, 0)`, 200);
+          if (hp <= 0) gameOver();
+        }
+        continue;
+      }
+      
+      if (p.mesh.position.length() > 80) {
+        cena.remove(p.mesh); projeteisInimigos.splice(i, 1);
+      }
+    }
+
+    if (invulneravel > 0) invulneravel -= dt;
+  }
+
+  let opacidadeFlash = parseFloat(flashEl.style.opacity || 0);
+  if (opacidadeFlash > 0) flashEl.style.opacity = Math.max(0, opacidadeFlash - dt * 5);
+
+  renderer.render(cena, camera);
+  requestAnimationFrame(animar);
+}
+
+function gameOver() {
+  jogoAtivo = false;
+  controls.unlock();
+  gameOverScreen.style.display = 'flex';
+  document.getElementById('game-over-title').innerText = "VOCÊ MORREU";
+  document.getElementById('game-over-title').style.color = "#ff0000";
+  document.getElementById('game-over-desc').innerText = "O Frumbus dominou o universo...";
+}
+
+animar();
+</script>
+</body>
+</html>
